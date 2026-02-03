@@ -1,6 +1,5 @@
-
-
-# Penovate: Handwriting Recognition (Single Character Focus) with a Sensor-Equipped Pen
+# Penovate 
+> **Official implementation of the paper: "Inertial Sensing–Based Real-Time Handwritten Character Recognition Using a CNN–BiLSTM Architecture"**
 
 Penovate is a hardware–software system for recognizing handwritten characters (a–z) written on ordinary paper, using a custom sensor-equipped pen and a deep learning model. The system is primarily designed and optimized for isolated single-character recognition, but may also work for continuous word or sequence input (with reduced accuracy, as this is not the main use case).
 
@@ -14,7 +13,8 @@ Penovate is a hardware–software system for recognizing handwritten characters 
 - Reproducible experiments and results
 
 **Model Names:**
-- `CNN_BiLSTM`: Main model for single-character recognition, combining convolutional and bidirectional LSTM layers
+- `CNN_BiLSTM`: Main model used in experiments (in `hybrid_CNN_BiLSTM.ipynb`) for single-character recognition, combining convolutional and bidirectional LSTM layers
+- `CNN_LSTM`: Alternative implementation in `model.ipynb` with similar architecture (early testing only)
 - Experiments include versions with and without Batch Normalization for comparison
 
 This README provides a detailed overview of the hardware, firmware, data pipeline, model architecture, training setup, results, and usage instructions for single-character recognition.
@@ -74,6 +74,17 @@ Penovate_Minor_Project/
 │   └── processed_imu/
 │
 ├── results/
+│   └── exp_{bn/no_bn}_bs32_seed{seed}_drop05/
+│       ├── best.pth (trained model checkpoint)
+│       ├── config.json (experiment configuration)
+│       ├── test_summary.txt (test metrics and classification report)
+│       ├── train_log.csv (per-epoch training metrics)
+│       ├── confusion_matrix_counts.{pdf,png} (confusion matrix with counts)
+│       ├── confusion_matrix_normalized.{pdf,png} (normalized confusion matrix)
+│       ├── exp_*_accuracy.{pdf,png} (training/validation accuracy plots)
+│       ├── exp_*_loss.{pdf,png} (training/validation loss plots)
+│       ├── y_pred_test.npy (test predictions)
+│       └── y_true_test.npy (test ground truth)
 │
 ├── scripts/
 │
@@ -115,34 +126,50 @@ Explanation:
 ### 2.3 Data Processing Pipeline
 
 1. **Acquisition**: Sensor streams (accelerometer, gyroscope, pressure).  
-2. **Filtering**: Low-pass Butterworth filter removes high-frequency noise.  
+2. **Filtering**: Low-pass Butterworth filter (order 2, cutoff 20 Hz) removes high-frequency noise.  
 3. **Segmentation**: Pressure threshold from FSR marks stroke start/end.  
-4. **Normalization**: Sensor values scaled to unit range.  
-5. **Padding**: Sequences zero-padded to fixed length for batching.  
+4. **Feature Engineering**: Relative motion computed between two IMUs (imu1 - imu2), concatenated with original signals (12 → 18 features).  
+5. **Normalization (Collection)**: Per-sequence z-score normalization during data collection.  
+6. **Splitting**: Dataset split into train/val/test (70%/15%/15%) with stratification.  
+7. **Normalization (Training)**: Global normalization using training set statistics.  
+8. **Augmentation**: Training data augmented with noise (σ=0.05) and random scaling (0.8-1.2×), generating 2 copies per sample.  
+9. **Padding**: Sequences zero-padded to fixed length (184 timesteps, 95th percentile) for batching.  
 
-**Data Preprocessing Steps:**
-- Raw sensor streams are filtered (Butterworth low-pass)
-- Segmentation using FSR pressure threshold
-- Normalization to unit range
-- Zero-padding to fixed sequence length
-- Label encoding and mapping (see `label_map.json`)
+**Data Preprocessing Summary:**
+- **Collection Phase** (`dataset_collection.py`):
+  - Butterworth low-pass filter (order 2, 20 Hz cutoff)
+  - Relative motion calculation between IMUs (creates 18 features)
+  - Per-sequence z-score normalization
+  - Segmentation via START/END signals from FSR
+- **Training Phase** (`process_imu_data.py`):
+  - Train/Val/Test split: 70%/15%/15% (stratified)
+  - Fixed sequence length: 184 timesteps (95th percentile)
+  - Zero-padding for shorter sequences
+  - Global normalization using training set statistics
+  - Data augmentation: Gaussian noise (σ=0.05) + random scaling (0.8-1.2×)
+  - Label encoding and mapping (see `label_map.json`)
 
 ---
 
 ## 3. Dataset
 
-  - Accelerometer (x, y, z)  
-  - Gyroscope (x, y, z)  
-  - Pressure (scalar)  
-
 **Classes:** 26 lowercase English letters (a–z), single character recognition.
-**Format:** Each character's samples are stored in separate JSON files (e.g., `a_lower.json`, `B_upper.json`) in the `imu_dataset` directory. Each file contains a list of preprocessed sensor sequences for that character.
-**Signals recorded:**
-   - Accelerometer (x, y, z) from IMU 1 and IMU 2
-   - Gyroscope (x, y, z) from IMU 1 and IMU 2
-   - Pressure (scalar)
-**Sampling frequency:** 100 Hz
-**Samples:** ~130 per class, single writer
+**Format:** Each character's samples are stored in separate JSON files (e.g., `a_lower.json`, `b_lower.json`) in the `imu_dataset` directory. Each file contains a list of preprocessed sensor sequences for that character.
+
+**Raw Signals Recorded (12 channels):**
+   - Accelerometer (x, y, z) from IMU 1
+   - Gyroscope (x, y, z) from IMU 1
+   - Accelerometer (x, y, z) from IMU 2
+   - Gyroscope (x, y, z) from IMU 2
+
+**Computed Features (18 channels total):**
+   - Original IMU 1 data: 6 channels (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z)
+   - Original IMU 2 data: 6 channels (acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z)
+   - Relative motion (IMU1 - IMU2): 6 channels (differential motion between pen tip and body)
+
+**Sampling frequency:** 100 Hz  
+**Samples:** ~130 per class, custom collected by two different writers  
+**Collection method:** Hardware pen device with real-time sensor acquisition  
 
 **Data Collection & Preprocessing Pipeline:**
 - Data is collected via a serial connection from the pen hardware.
@@ -175,9 +202,9 @@ Each character sample is stored as a JSON file with synchronized sensor readings
   - Outputs class probabilities for 26 characters.  
 
 **Model Code Reference:**
-See `hybrid_CNN_BiLSTM.ipynb` and `model.ipynb` for full PyTorch implementation, including:
-- Model class: `CNN_BiLSTM`
-- Training loop: `Trainer` class
+See `hybrid_CNN_BiLSTM.ipynb` (recommended) and `model.ipynb` for full PyTorch implementation, including:
+- Model class: `CNN_BiLSTM` (in `hybrid_CNN_BiLSTM.ipynb`) or `CNN_LSTM` (in `model.ipynb`)
+- Training loop: `Trainer` class (in `hybrid_CNN_BiLSTM.ipynb`)
 - Data loading: `make_loaders`, `load_raw_splits`
 
 ### 4.2 Training Setup
@@ -185,17 +212,20 @@ See `hybrid_CNN_BiLSTM.ipynb` and `model.ipynb` for full PyTorch implementation,
 **Data directory:** `data/processed_imu`  
 **Output directory:** `results/exp_{bn/no_bn}_bs{batch_size}_seed{seed}_{drop}`  
 **Model:** Hybrid CNN-BiLSTM (2 Conv1D layers, 2-layer BiLSTM, optional BatchNorm, Dropout)  
-**Input features:** 18 (sensor channels)  
+**Input features:** 18 (12 raw sensor channels + 6 relative motion channels)  
+**Sequence length:** 184 timesteps (fixed, 95th percentile of training data)  
+**Data split:** 70% train / 15% validation / 15% test (stratified)  
+**Data augmentation:** 2 augmented copies per training sample with Gaussian noise (σ=0.05) and random scaling (0.8-1.2×)  
 **Batch size:** 32  
 **Epochs:** 30  
 **Hidden size:** 128 (LSTM)  
-**Dropout:** 0.5  
+**Dropout:** 0.5 (experiments use 0.5; notebook defaults are 0.3)  
 **Batch normalization:** enabled/disabled (experimented both)  
 **Optimizer:** AdamW (`lr=1e-4`, `weight_decay=1e-3`)  
 **Learning rate scheduler:** StepLR (`step_size=8`, `gamma=0.7`)  
 **Early stopping patience:** 7 epochs (on macro-F1)  
 **Random seeds:** 42, 123, 7 (for reproducibility)  
-**Top-k accuracy:** k=3 (optional)  
+**Top-k accuracy:** k=3 (top-3 accuracy also computed)  
 **Deterministic training:** True (for reproducibility)  
 **Framework:** PyTorch  
 
@@ -214,10 +244,16 @@ See `hybrid_CNN_BiLSTM.ipynb` and `model.ipynb` for full PyTorch implementation,
 | exp_bn_bs32_seed7_drop05      | True  | 0.0670 | 0.9862 | 0.9863 |
 | exp_no_bn_bs32_seed7_drop05   | False | 0.1049 | 0.9842 | 0.9843 |
 
-#### Metrics
+#### Metrics and Outputs
 
 - Accuracy, macro F1-score, and loss are reported for each experiment.
-- Confusion matrices for all 26 classes are available in the results folder.
+- Each experiment folder contains:
+  - `test_summary.txt`: Complete classification report with per-class precision, recall, and F1-score
+  - `train_log.csv`: Per-epoch training and validation metrics
+  - Confusion matrices (both count and normalized versions) in PDF and PNG formats
+  - Training/validation accuracy and loss plots in PDF and PNG formats
+  - Model checkpoint (`best.pth`) and configuration (`config.json`)
+  - Prediction arrays (`y_pred_test.npy`, `y_true_test.npy`) for further analysis
 
 #### Observations
 
@@ -250,12 +286,29 @@ pip install -r requirements.txt
 
 1. Prepare your data in `data/processed_imu/` (see dataset section).
 2. Run the main notebook or script:
-   - `python model.ipynb` (or run all cells in Jupyter)
+   - Open `model.ipynb` or `hybrid_CNN_BiLSTM.ipynb` in Jupyter and run all cells
    - Or use the provided training functions in your own script.
 
 ### Inference
 
-Use `predict.py` or `predict_gui.py` to run inference on new sensor data. See script comments for usage.
+Two scripts are provided for real-time inference:
+
+**GUI-based predictor** (`predict_gui.py`):
+- Interactive GUI for real-time character prediction
+- Connects to serial port for live sensor data
+- Displays predictions with confidence scores
+- Visualizes sensor data streams
+
+**Command-line predictor** (`realtime_predictor.py`):
+- Terminal-based real-time prediction
+- Lightweight alternative without GUI overhead
+
+Both scripts require:
+- A trained model checkpoint (e.g., `results/exp_bn_bs32_seed42_drop05/best.pth`)
+- Serial connection to the pen device
+- Proper COM port configuration
+
+See script comments for detailed usage instructions.
 
 ---
 

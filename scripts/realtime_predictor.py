@@ -8,7 +8,7 @@ import torch.nn as nn
 
 # Model definition
 class CNN_BiLSTM(nn.Module):
-    def __init__(self, num_features, num_classes, hidden_size=128, dropout=0.3):
+    def __init__(self, num_features, num_classes, hidden_size=128, dropout=0.5):
         super().__init__()
         self.num_features = num_features
         self.conv1 = nn.Conv1d(num_features, 64, kernel_size=5, padding=2)
@@ -49,7 +49,7 @@ class IMUPredictor:
         label_map_path="label_map.json",
         port="COM6",
         baud_rate=115200,
-        fixed_seq_len=128,
+        fixed_seq_len=184,
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         with open(label_map_path, "r") as f:
