@@ -100,12 +100,14 @@ Firmware samples sensors at 100 Hz and transmits 12-channel data packets (2 IMUs
 **Collection:**
 - ~130 samples per class from one writer
 - Total: 3,380 original samples
-- After 3× augmentation: 8,110 samples
 
 **Split:**
-- Train: 5,677 samples (70%)
-- Validation: 1,216 samples (15%)
-- Test: 1,217 samples (15%)
+- Original split: 2,366 train / 507 val / 507 test (70%/15%/15%)
+- After augmenting training set (1 original + 2 copies = 3× per sample):
+  - Train: 7,098 samples
+  - Validation: 507 samples (not augmented)
+  - Test: 507 samples (not augmented)
+  - **Total: 8,112 samples**
 
 **Sequence Length:**
 - Mean: 131.6 timesteps, Std: 30.2
@@ -144,7 +146,7 @@ Input (B, 184, 18)
 | LR scheduler | StepLR (step=8, γ=0.7) |
 | Early stopping | 7 epochs (on macro-F1) |
 | Seeds | 42, 123, 7 |
-| Augmentation | Noise (σ=0.05) + scaling (0.8-1.2×), 2 copies |
+| Augmentation | Training only: +2 copies (3× total) with noise (σ=0.05) + scaling (0.8-1.2×) |
 | Framework | PyTorch |  
 
 ---
